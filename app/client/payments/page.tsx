@@ -177,7 +177,7 @@ export default function ClientPayments() {
       <div className="flex h-screen items-center justify-center bg-neutral-100 dark:bg-neutral-900">
         <div className="text-center">
           <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-neutral-600 dark:text-neutral-400">Loading payments...</p>
+          <p className="text-neutral-600 dark:text-neutral-400">Loading payments..</p>
         </div>
       </div>
     );

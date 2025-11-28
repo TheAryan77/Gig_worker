@@ -113,6 +113,8 @@ export const TextHoverEffect = ({
         transition={{
           duration: 4,
           ease: "easeInOut",
+          repeat: Infinity,
+          repeatDelay: 6,
         }}
       >
         {text}
