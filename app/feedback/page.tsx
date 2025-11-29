@@ -4,13 +4,25 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { onAuthStateChanged } from "firebase/auth";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, Timestamp } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { IconStar, IconStarFilled, IconMessageCircle, IconSparkles } from "@tabler/icons-react";
+import { IconStar, IconStarFilled, IconMessageCircle, IconSparkles, IconUser } from "@tabler/icons-react";
+
+interface Feedback {
+  id: string;
+  userId: string;
+  userEmail: string;
+  title: string;
+  message: string;
+  category: string;
+  rating: number;
+  createdAt: Timestamp;
+  status: string;
+}
 
 export default function FeedbackPage() {
   const router = useRouter();
@@ -25,6 +37,7 @@ export default function FeedbackPage() {
     category: "general",
   });
   const [submitted, setSubmitted] = useState(false);
+  const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -38,6 +51,24 @@ export default function FeedbackPage() {
 
     return () => unsubscribe();
   }, [router]);
+
+  // Real-time feedback listener
+  useEffect(() => {
+    const feedbackQuery = query(
+      collection(db, "feedback"),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(feedbackQuery, (snapshot) => {
+      const feedbackData: Feedback[] = [];
+      snapshot.forEach((doc) => {
+        feedbackData.push({ id: doc.id, ...doc.data() } as Feedback);
+      });
+      setFeedbacks(feedbackData);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -276,6 +307,136 @@ export default function FeedbackPage() {
             <IconSparkles className="w-4 h-4 text-orange-500" />
             <span className="text-sm">Your feedback helps us build a better platform for everyone</span>
           </div>
+        </motion.div>
+
+        {/* Feedback Table */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.6 }}
+          className="mt-12"
+        >
+          <Card className="border-2 border-orange-100 shadow-xl shadow-orange-100/50">
+            <CardHeader className="border-b border-orange-50 bg-gradient-to-r from-orange-50 to-white">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-orange-100 rounded-xl">
+                  <IconMessageCircle className="w-6 h-6 text-orange-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-2xl text-neutral-900">Recent Feedback</CardTitle>
+                  <CardDescription className="text-neutral-600">
+                    See what others are saying about TrustHire
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            
+            <CardContent className="p-0">
+              {feedbacks.length === 0 ? (
+                <div className="p-12 text-center">
+                  <div className="w-16 h-16 mx-auto mb-4 bg-orange-50 rounded-full flex items-center justify-center">
+                    <IconMessageCircle className="w-8 h-8 text-orange-400" />
+                  </div>
+                  <p className="text-neutral-500">No feedback yet. Be the first to share your thoughts!</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead className="bg-orange-50 border-b-2 border-orange-100">
+                      <tr>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-900">User</th>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-900">Title</th>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-900">Category</th>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-900">Rating</th>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-900">Message</th>
+                        <th className="px-6 py-4 text-left text-sm font-semibold text-neutral-900">Date</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-100">
+                      {feedbacks.map((feedback, index) => (
+                        <motion.tr
+                          key={feedback.id}
+                          initial={{ opacity: 0, x: -20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.05 }}
+                          className="hover:bg-orange-50/50 transition-colors"
+                        >
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 bg-gradient-to-br from-orange-400 to-orange-600 rounded-full flex items-center justify-center">
+                                <IconUser className="w-5 h-5 text-white" />
+                              </div>
+                              <div className="max-w-[150px]">
+                                <p className="text-sm font-medium text-neutral-900 truncate">
+                                  {feedback.userEmail.split('@')[0]}
+                                </p>
+                                <p className="text-xs text-neutral-500 truncate">
+                                  {feedback.userEmail}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm font-semibold text-neutral-900 max-w-[200px] truncate">
+                              {feedback.title}
+                            </p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                              feedback.category === 'general' ? 'bg-blue-100 text-blue-700' :
+                              feedback.category === 'feature' ? 'bg-purple-100 text-purple-700' :
+                              feedback.category === 'bug' ? 'bg-red-100 text-red-700' :
+                              'bg-green-100 text-green-700'
+                            }`}>
+                              {feedback.category === 'general' ? '💬 General' :
+                               feedback.category === 'feature' ? '✨ Feature' :
+                               feedback.category === 'bug' ? '🐛 Bug' :
+                               '🎨 UI/UX'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-1">
+                              {[...Array(5)].map((_, i) => (
+                                <IconStarFilled
+                                  key={i}
+                                  className={`w-4 h-4 ${
+                                    i < feedback.rating ? 'text-orange-500' : 'text-neutral-300'
+                                  }`}
+                                />
+                              ))}
+                              <span className="ml-2 text-sm font-semibold text-neutral-700">
+                                {feedback.rating}/5
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm text-neutral-700 max-w-[300px] line-clamp-2">
+                              {feedback.message}
+                            </p>
+                          </td>
+                          <td className="px-6 py-4">
+                            <p className="text-sm text-neutral-600">
+                              {feedback.createdAt?.toDate().toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric',
+                                year: 'numeric'
+                              })}
+                            </p>
+                            <p className="text-xs text-neutral-500">
+                              {feedback.createdAt?.toDate().toLocaleTimeString('en-US', {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </p>
+                          </td>
+                        </motion.tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </motion.div>
       </div>
     </div>
