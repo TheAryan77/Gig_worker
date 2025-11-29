@@ -38,7 +38,15 @@ quote:
       designation: "Full Stack Developer (Freelancer)",
       src:  
 "https://github.com/TheAryan77/Shivanshu-s-Project-/blob/main/harish.png?raw=true"
-    }
+    },
+    {
+quote:
+"I often found difficulty while founding freelancers for my websites. Now, I can easily find and hire skilled freelancers for my projects. This platform is a game-changer!",
+      name: "Satyam Mehta",
+      designation: "Founder at Euphoric",
+      src:  
+"https://github.com/TheAryan77/Shivanshu-s-Project-/blob/main/Satyam.jpeg?raw=true"
+    },
   ];
   return <AnimatedTestimonials testimonials={testimonials} />;
 }
