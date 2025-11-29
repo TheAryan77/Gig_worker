@@ -36,7 +36,7 @@ quote:
         "The AI-assisted verification is a game changer. Even without deep technical knowledge, I can confidently approve work knowing the quality checks are already done.",
       name: "Harish Suthar",
       designation: "Full Stack Developer (Freelancer)",
-      src: 
+      src:  
 "https://github.com/TheAryan77/Shivanshu-s-Project-/blob/main/harish.png?raw=true"
     }
   ];
