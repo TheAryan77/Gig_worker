@@ -111,10 +111,11 @@ export default function ProjectPage() {
   const [paymentMethod, setPaymentMethod] = useState<"crypto" | "razorpay" | "escrow" | null>(null);
   const [showCryptoPayment, setShowCryptoPayment] = useState(false);
   const [showRazorpayPayment, setShowRazorpayPayment] = useState(false);
+  const [showCallWarning, setShowCallWarning] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom of messages
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -123,7 +124,7 @@ export default function ProjectPage() {
     scrollToBottom();
   }, [messages]);
 
-  // Auth check
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -141,7 +142,7 @@ export default function ProjectPage() {
     return () => unsubscribe();
   }, [router]);
 
-  // Fetch project data
+
   useEffect(() => {
     if (!projectId) return;
 
@@ -151,7 +152,7 @@ export default function ProjectPage() {
         const data = { id: docSnap.id, ...docSnap.data() } as Project;
         setProject(data);
 
-        // Determine user role
+
         if (userId) {
           if (data.clientId === userId) {
             setUserRole("client");
@@ -160,7 +161,7 @@ export default function ProjectPage() {
           }
         }
 
-        // Set active tab based on agreement status
+
         if (!data.clientAgreed || !data.freelancerAgreed) {
           setActiveTab("agreement");
         } else if (data.status === "in-progress") {
@@ -176,7 +177,7 @@ export default function ProjectPage() {
     return () => unsubscribe();
   }, [projectId, userId, router]);
 
-  // Fetch messages
+
   useEffect(() => {
     if (!projectId) return;
 
@@ -196,7 +197,7 @@ export default function ProjectPage() {
     return () => unsubscribe();
   }, [projectId]);
 
-  // Send message
+
   const sendMessage = async () => {
     if (!newMessage.trim() || !userId || !userRole || !project) return;
 
@@ -218,7 +219,7 @@ export default function ProjectPage() {
     }
   };
 
-  // Sign agreement
+
   const signAgreement = async () => {
     if (!project || !userId || !userRole) return;
 
@@ -232,18 +233,18 @@ export default function ProjectPage() {
         updateData.freelancerAgreed = true;
       }
 
-      // Check if both have agreed
+
       const otherPartyAgreed = userRole === "client" ? project.freelancerAgreed : project.clientAgreed;
 
       if (otherPartyAgreed) {
-        // Both agreed - now client needs to pay
+
         updateData.status = "pending-payment";
         updateData.agreedAt = serverTimestamp();
       }
 
       await updateDoc(doc(db, "projects", projectId), updateData);
 
-      // Add system message
+
       const systemMessage = otherPartyAgreed 
         ? `${userName} has signed the agreement. Waiting for client to secure payment in escrow.`
         : `${userName} has signed the agreement.`;
@@ -941,11 +942,17 @@ export default function ProjectPage() {
         <div className="mt-auto p-4 border-t border-neutral-200 dark:border-neutral-800">
           <p className="text-xs text-neutral-500 mb-3">Quick Actions</p>
           <div className="flex gap-2">
-            <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all text-sm">
+            <button 
+              onClick={() => setShowCallWarning(true)}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-all text-sm"
+            >
               <IconPhone className="w-4 h-4" />
               Call
             </button>
-            <button className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all text-sm">
+            <button 
+              onClick={() => router.push(`/video-call/${projectId}?projectName=${encodeURIComponent(project?.jobTitle || 'Project')}&userName=${encodeURIComponent(userName)}`)}
+              className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-all text-sm"
+            >
               <IconVideo className="w-4 h-4" />
               Video
             </button>
@@ -1822,6 +1829,97 @@ export default function ProjectPage() {
               processing={processingPayment}
               setProcessing={setProcessingPayment}
             />
+
+      {/* Call Warning Modal */}
+      {showCallWarning && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white dark:bg-neutral-800 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden"
+          >
+            {/* Header */}
+            <div className="bg-gradient-to-r from-orange-500 to-red-500 p-6 text-white">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="p-3 bg-white bg-opacity-20 rounded-full">
+                  <IconAlertCircle className="w-8 h-8" />
+                </div>
+                <h3 className="text-2xl font-bold">Security Warning</h3>
+              </div>
+              <p className="text-orange-50">Important information about sharing contact details</p>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 space-y-4">
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <IconAlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-red-900 dark:text-red-100 mb-2">
+                      Never share your phone number in chat!
+                    </p>
+                    <p className="text-sm text-red-800 dark:text-red-200">
+                      For your security and privacy, avoid sharing personal contact information through our chat system.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <h4 className="font-semibold text-neutral-900 dark:text-white flex items-center gap-2">
+                  <IconLock className="w-4 h-4 text-orange-500" />
+                  Why this matters:
+                </h4>
+                <ul className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
+                  <li className="flex items-start gap-2">
+                    <span className="text-orange-500 font-bold mt-0.5">•</span>
+                    <span>Protects you from potential scams and harassment</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-orange-500 font-bold mt-0.5">•</span>
+                    <span>Maintains professional boundaries</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-orange-500 font-bold mt-0.5">•</span>
+                    <span>Keeps all communication within TrustHire for dispute resolution</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="text-orange-500 font-bold mt-0.5">•</span>
+                    <span>Prevents circumventing our secure payment system</span>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border-2 border-blue-200 dark:border-blue-800 rounded-xl">
+                <div className="flex items-start gap-3">
+                  <IconVideo className="w-5 h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-blue-900 dark:text-blue-100 mb-1">
+                      Use our Video Call instead!
+                    </p>
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      Click the Video button to have a secure, recorded conversation directly within TrustHire.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-6 bg-neutral-50 dark:bg-neutral-900 border-t border-neutral-200 dark:border-neutral-700">
+              <button
+                onClick={() => setShowCallWarning(false)}
+                className="w-full px-6 py-3 bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white rounded-xl transition-all font-semibold shadow-lg"
+              >
+                I Understand
+              </button>
+              <p className="text-center text-xs text-neutral-500 mt-3">
+                Your safety is our priority
+              </p>
+            </div>
+          </motion.div>
+        </div>
+      )}
           </motion.div>
         </div>
       )}
