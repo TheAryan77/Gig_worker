@@ -32,6 +32,10 @@ export default function RootLayout({
         <ConditionalAppbar/>
         {children}
         <ChatBot />
+        {/* Footer */}
+        <footer className="w-full py-4 text-center text-sm text-neutral-500 dark:text-neutral-400 border-t border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900">
+          <p>© {new Date().getFullYear()} TrustHire. Built and managed by <span className="text-orange-500 font-medium">Aryan Mahendru</span> at <span className="text-orange-500 font-medium">Hack Adhyaay</span></p>
+        </footer>
       </body>
     </html>
   );
