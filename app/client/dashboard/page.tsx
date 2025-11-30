@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
-import { onAuthStateChanged } from "firebase/auth";
+import { onAuthStateChanged, signOut } from "firebase/auth";
 import {
   collection,
   query,
@@ -96,6 +96,8 @@ export default function ClientDashboard() {
   
   // User state
   const [userId, setUserId] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string>("");
+  const [showUserMenu, setShowUserMenu] = useState(false);
   
   // Data state
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -106,9 +108,14 @@ export default function ClientDashboard() {
 
   // Auth
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         setUserId(user.uid);
+        // Get user name
+        const userDoc = await getDoc(doc(db, "users", user.uid));
+        if (userDoc.exists()) {
+          setUserName(userDoc.data().name || "Client");
+        }
       } else {
         router.push("/choice");
       }
@@ -116,6 +123,16 @@ export default function ClientDashboard() {
 
     return () => unsubscribe();
   }, [router]);
+
+  // Handle logout
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      router.push("/");
+    } catch (error) {
+      console.error("Error signing out:", error);
+    }
+  };
 
   // Fetch client's jobs
   useEffect(() => {
@@ -460,13 +477,48 @@ export default function ClientDashboard() {
                 {activeTab === "completed" && "View your completed projects"}
               </p>
             </div>
-            <button
-              onClick={() => router.push("/client/post-job")}
-              className="px-4 py-2 bg-orange-500 text-white rounded-xl hover:bg-orange-600 transition-all flex items-center gap-2"
-            >
-              <IconPlus className="w-5 h-5" />
-              Post New Job
-            </button>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={() => router.push("/client/post-job")}
+                className="px-4 py-2 bg-orange-500 text-white rounded-xl hover:bg-orange-600 transition-all flex items-center gap-2"
+              >
+                <IconPlus className="w-5 h-5" />
+                Post New Job
+              </button>
+              
+              {/* User Profile Dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  onBlur={() => setTimeout(() => setShowUserMenu(false), 150)}
+                  className="flex items-center gap-2 px-4 py-2 bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-xl transition-all"
+                >
+                  <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center">
+                    <span className="text-white font-semibold text-sm">
+                      {userName.charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <span className="text-neutral-900 dark:text-white font-medium hidden sm:block">
+                    {userName}
+                  </span>
+                  <svg className="w-4 h-4 text-neutral-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                
+                {showUserMenu && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-neutral-800 rounded-xl shadow-lg border border-neutral-200 dark:border-neutral-700 py-2 z-50">
+                    <button
+                      onClick={handleLogout}
+                      className="w-full px-4 py-2 text-left text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2 transition-all"
+                    >
+                      <IconLogout className="w-4 h-4" />
+                      Logout
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 
