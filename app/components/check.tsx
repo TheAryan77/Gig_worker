@@ -8,7 +8,7 @@ const Check = () => {
         {/* Left Column - Description */}
         <div className="space-y-6">
           <h2 className="text-3xl md:text-4xl lg:text-5xl font-bold text-neutral-900 dark:text-white">
-            Compare <span className='text-orange-500'>Before</span> & <span className='text-orange-500'>After</span>
+            Get <span className='text-orange-500'>Your</span> work <span className='text-orange-500'>Done</span>!
           </h2>
           <p className="text-lg text-neutral-600 dark:text-neutral-400 leading-relaxed">
             See the difference between your code problems and solutions with our 

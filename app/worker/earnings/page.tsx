@@ -11,6 +11,9 @@ import {
   onSnapshot,
   doc,
   getDoc,
+  addDoc,
+  updateDoc,
+  serverTimestamp,
   Timestamp,
 } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
@@ -27,11 +30,16 @@ import {
   IconHome,
   IconLogout,
   IconCash,
-  IconSettings,
   IconArrowDownLeft,
   IconWallet,
   IconTrendingUp,
   IconStarFilled,
+  IconBuildingBank,
+  IconCurrencyEthereum,
+  IconArrowUpRight,
+  IconX,
+  IconCheck,
+  IconAlertCircle,
 } from "@tabler/icons-react";
 
 interface EarningRecord {
@@ -40,16 +48,35 @@ interface EarningRecord {
   projectTitle: string;
   clientName: string;
   amount: number;
-  type: "escrow" | "release";
-  status: "held" | "completed";
+  type: "escrow" | "release" | "withdrawal";
+  status: "held" | "completed" | "pending" | "processed";
   createdAt: Timestamp;
+  withdrawalMethod?: "bank" | "crypto" | "razorpay";
 }
 
 interface EarningsSummary {
   totalEarnings: number;
   pendingEarnings: number;
+  availableBalance: number;
   completedJobs: number;
   averageRating: number;
+}
+
+interface BankDetails {
+  accountName: string;
+  accountNumber: string;
+  bankName: string;
+  ifscCode: string;
+}
+
+interface CryptoWallet {
+  address: string;
+  network: string;
+}
+
+interface UpiDetails {
+  upiId: string;
+  name: string;
 }
 
 // Worker category icons
@@ -74,15 +101,38 @@ export default function WorkerEarnings() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
+  const [userName, setUserName] = useState<string>("");
   const [workerCategory, setWorkerCategory] = useState<string>("");
   const [earnings, setEarnings] = useState<EarningRecord[]>([]);
   const [summary, setSummary] = useState<EarningsSummary>({
     totalEarnings: 0,
     pendingEarnings: 0,
+    availableBalance: 0,
     completedJobs: 0,
     averageRating: 0,
   });
   const [loading, setLoading] = useState(true);
+  
+  // Withdrawal states
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [withdrawMethod, setWithdrawMethod] = useState<"bank" | "crypto" | "razorpay" | null>(null);
+  const [withdrawAmount, setWithdrawAmount] = useState<string>("");
+  const [processingWithdraw, setProcessingWithdraw] = useState(false);
+  const [withdrawSuccess, setWithdrawSuccess] = useState(false);
+  const [bankDetails, setBankDetails] = useState<BankDetails>({
+    accountName: "",
+    accountNumber: "",
+    bankName: "",
+    ifscCode: "",
+  });
+  const [cryptoWallet, setCryptoWallet] = useState<CryptoWallet>({
+    address: "",
+    network: "ethereum",
+  });
+  const [upiDetails, setUpiDetails] = useState<UpiDetails>({
+    upiId: "",
+    name: "",
+  });
 
   // Format category name
   const formatCategoryName = (category: string) => {
@@ -102,12 +152,24 @@ export default function WorkerEarnings() {
         const userDoc = await getDoc(doc(db, "users", user.uid));
         if (userDoc.exists()) {
           const userData = userDoc.data();
+          setUserName(userData.name || user.displayName || "User");
           setWorkerCategory(userData.workerCategory || "");
           setSummary(prev => ({
             ...prev,
             totalEarnings: userData.totalEarnings || 0,
+            availableBalance: userData.availableBalance || userData.totalEarnings || 0,
             averageRating: userData.averageRating || 0,
           }));
+          // Load saved payment details
+          if (userData.bankDetails) {
+            setBankDetails(userData.bankDetails);
+          }
+          if (userData.cryptoWallet) {
+            setCryptoWallet(userData.cryptoWallet);
+          }
+          if (userData.upiDetails) {
+            setUpiDetails(userData.upiDetails);
+          }
         }
       } else {
         router.push("/choice");
@@ -128,7 +190,9 @@ export default function WorkerEarnings() {
 
     const unsubscribe = onSnapshot(transactionsQuery, (snapshot) => {
       const earningsData: EarningRecord[] = [];
-      let pendingEarnings = 0;
+      let escrowEarnings = 0;
+      let releasedEarnings = 0;
+      let withdrawnAmount = 0;
       let completedJobs = 0;
 
       snapshot.forEach((doc) => {
@@ -144,13 +208,25 @@ export default function WorkerEarnings() {
           createdAt: data.createdAt,
         });
 
+        // Count escrow amounts
         if (data.type === "escrow" && data.status === "held") {
-          pendingEarnings += data.amount;
+          escrowEarnings += data.amount;
         }
+        // Count released payments
         if (data.type === "release" && data.status === "completed") {
+          releasedEarnings += data.amount;
           completedJobs++;
         }
+        // Count withdrawals
+        if (data.type === "withdrawal") {
+          withdrawnAmount += data.amount;
+        }
       });
+
+      // Total earnings = escrow + released
+      const totalEarnings = escrowEarnings + releasedEarnings;
+      // Available balance = total - withdrawals
+      const availableBalance = totalEarnings - withdrawnAmount;
 
       // Sort by createdAt
       earningsData.sort((a, b) => {
@@ -161,7 +237,9 @@ export default function WorkerEarnings() {
       setEarnings(earningsData);
       setSummary(prev => ({
         ...prev,
-        pendingEarnings,
+        totalEarnings,
+        pendingEarnings: escrowEarnings,
+        availableBalance: Math.max(0, availableBalance),
         completedJobs,
       }));
       setLoading(false);
@@ -169,6 +247,92 @@ export default function WorkerEarnings() {
 
     return () => unsubscribe();
   }, [userId]);
+
+  // Process withdrawal
+  const processWithdrawal = async () => {
+    if (!userId || !withdrawMethod) return;
+    
+    const amount = parseFloat(withdrawAmount);
+    if (isNaN(amount) || amount <= 0 || amount > summary.availableBalance) {
+      return;
+    }
+
+    setProcessingWithdraw(true);
+    try {
+      // Get withdrawal details based on method
+      const getWithdrawalDetails = () => {
+        if (withdrawMethod === "bank") {
+          return { bankDetails };
+        } else if (withdrawMethod === "crypto") {
+          return { cryptoWallet };
+        } else {
+          return { upiDetails };
+        }
+      };
+
+      const getProcessingNote = () => {
+        if (withdrawMethod === "bank") {
+          return `Bank transfer to ${bankDetails.bankName} - ${bankDetails.accountNumber.slice(-4)}`;
+        } else if (withdrawMethod === "crypto") {
+          return `Crypto transfer to ${cryptoWallet.address.slice(0, 8)}...${cryptoWallet.address.slice(-6)} on ${cryptoWallet.network}`;
+        } else {
+          return `UPI transfer to ${upiDetails.upiId}`;
+        }
+      };
+
+      // Create withdrawal transaction record
+      await addDoc(collection(db, "transactions"), {
+        freelancerId: userId,
+        freelancerName: userName,
+        amount: amount,
+        type: "withdrawal",
+        status: "pending",
+        withdrawalMethod: withdrawMethod,
+        ...getWithdrawalDetails(),
+        createdAt: serverTimestamp(),
+      });
+
+      // Update user's available balance
+      const userRef = doc(db, "users", userId);
+      await updateDoc(userRef, {
+        availableBalance: summary.availableBalance - amount,
+        ...getWithdrawalDetails(),
+      });
+
+      // Create withdrawal record for admin tracking
+      await addDoc(collection(db, "withdrawals"), {
+        userId: userId,
+        userName: userName,
+        amount: amount,
+        method: withdrawMethod,
+        status: "pending",
+        ...getWithdrawalDetails(),
+        processingNote: getProcessingNote(),
+        requestedAt: serverTimestamp(),
+      });
+
+      // Update local state
+      setSummary(prev => ({
+        ...prev,
+        availableBalance: prev.availableBalance - amount,
+      }));
+
+      setWithdrawSuccess(true);
+      
+      // Reset after 3 seconds
+      setTimeout(() => {
+        setWithdrawSuccess(false);
+        setShowWithdrawModal(false);
+        setWithdrawMethod(null);
+        setWithdrawAmount("");
+      }, 3000);
+
+    } catch (error) {
+      console.error("Error processing withdrawal:", error);
+    } finally {
+      setProcessingWithdraw(false);
+    }
+  };
 
   const formatDate = (timestamp: Timestamp) => {
     if (!timestamp) return "";
@@ -207,11 +371,6 @@ export default function WorkerEarnings() {
       label: "Profile",
       href: "/worker/profile-setup",
       icon: <IconUser className="text-neutral-700 dark:text-neutral-200 h-5 w-5 flex-shrink-0" />,
-    },
-    {
-      label: "Settings",
-      href: "#",
-      icon: <IconSettings className="text-neutral-700 dark:text-neutral-200 h-5 w-5 flex-shrink-0" />,
     },
   ];
 
@@ -305,16 +464,26 @@ export default function WorkerEarnings() {
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
             <div className="bg-white dark:bg-neutral-800 rounded-xl border border-neutral-200 dark:border-neutral-700 p-6">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                  <IconWallet className="w-6 h-6 text-green-500" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                    <IconWallet className="w-6 h-6 text-green-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm text-neutral-500">Available Balance</p>
+                    <p className="text-2xl font-bold text-green-500">
+                      ₹{summary.availableBalance.toLocaleString()}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-neutral-500">Total Earnings</p>
-                  <p className="text-2xl font-bold text-green-500">
-                    ₹{summary.totalEarnings.toLocaleString()}
-                  </p>
-                </div>
+                <button
+                  onClick={() => setShowWithdrawModal(true)}
+                  disabled={summary.availableBalance <= 0}
+                  className="flex items-center gap-1 px-3 py-1.5 bg-green-500 hover:bg-green-600 disabled:bg-neutral-300 dark:disabled:bg-neutral-600 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+                >
+                  <IconArrowUpRight className="w-4 h-4" />
+                  Withdraw
+                </button>
               </div>
             </div>
 
@@ -450,6 +619,268 @@ export default function WorkerEarnings() {
           </div>
         </div>
       </div>
+
+      {/* Withdrawal Modal */}
+      {showWithdrawModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-neutral-800 rounded-xl max-w-md w-full p-6 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => {
+                setShowWithdrawModal(false);
+                setWithdrawSuccess(false);
+                setWithdrawAmount("");
+                setWithdrawMethod(null);
+              }}
+              className="absolute top-4 right-4 text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+            >
+              <IconX className="w-5 h-5" />
+            </button>
+
+            {withdrawSuccess ? (
+              <div className="text-center py-8">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                  <IconCheck className="w-8 h-8 text-green-500" />
+                </div>
+                <h3 className="text-xl font-bold text-neutral-900 dark:text-white mb-2">
+                  Withdrawal Initiated!
+                </h3>
+                <p className="text-neutral-600 dark:text-neutral-400">
+                  {withdrawMethod === "razorpay" 
+                    ? "Funds will be transferred within minutes via UPI"
+                    : withdrawMethod === "crypto"
+                    ? "Funds will be transferred within ~10 minutes"
+                    : "Funds will be transferred within 1-2 business days"
+                  }
+                </p>
+              </div>
+            ) : (
+              <>
+                <h3 className="text-xl font-bold text-neutral-900 dark:text-white mb-6">
+                  Withdraw Funds
+                </h3>
+
+                {/* Amount Input */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                    Amount to Withdraw
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500">₹</span>
+                    <input
+                      type="number"
+                      value={withdrawAmount}
+                      onChange={(e) => {
+                        const value = Math.min(Number(e.target.value), summary.availableBalance);
+                        setWithdrawAmount(value > 0 ? String(value) : "");
+                      }}
+                      placeholder="0.00"
+                      max={summary.availableBalance}
+                      className="w-full pl-8 pr-4 py-3 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                    />
+                  </div>
+                  <p className="mt-1 text-sm text-neutral-500">
+                    Available: ₹{summary.availableBalance.toLocaleString()}
+                  </p>
+                </div>
+
+                {/* Withdrawal Method Selection */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
+                    Withdrawal Method
+                  </label>
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      onClick={() => setWithdrawMethod("razorpay")}
+                      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
+                        withdrawMethod === "razorpay"
+                          ? "border-green-500 bg-green-50 dark:bg-green-900/20"
+                          : "border-neutral-200 dark:border-neutral-700 hover:border-green-300"
+                      }`}
+                    >
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        withdrawMethod === "razorpay" ? "bg-green-100 dark:bg-green-900/30" : "bg-neutral-100 dark:bg-neutral-700"
+                      }`}>
+                        <span className="text-lg font-bold text-green-500">₹</span>
+                      </div>
+                      <span className={`font-medium text-sm ${withdrawMethod === "razorpay" ? "text-green-600 dark:text-green-400" : "text-neutral-700 dark:text-neutral-300"}`}>
+                        UPI
+                      </span>
+                      <span className="text-[10px] text-green-500 font-medium">Instant</span>
+                    </button>
+                    <button
+                      onClick={() => setWithdrawMethod("bank")}
+                      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
+                        withdrawMethod === "bank"
+                          ? "border-green-500 bg-green-50 dark:bg-green-900/20"
+                          : "border-neutral-200 dark:border-neutral-700 hover:border-green-300"
+                      }`}
+                    >
+                      <IconBuildingBank className={`w-8 h-8 ${withdrawMethod === "bank" ? "text-green-500" : "text-neutral-500"}`} />
+                      <span className={`font-medium text-sm ${withdrawMethod === "bank" ? "text-green-600 dark:text-green-400" : "text-neutral-700 dark:text-neutral-300"}`}>
+                        Bank
+                      </span>
+                      <span className="text-[10px] text-neutral-500">1-2 days</span>
+                    </button>
+                    <button
+                      onClick={() => setWithdrawMethod("crypto")}
+                      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
+                        withdrawMethod === "crypto"
+                          ? "border-green-500 bg-green-50 dark:bg-green-900/20"
+                          : "border-neutral-200 dark:border-neutral-700 hover:border-green-300"
+                      }`}
+                    >
+                      <IconCurrencyEthereum className={`w-8 h-8 ${withdrawMethod === "crypto" ? "text-green-500" : "text-neutral-500"}`} />
+                      <span className={`font-medium text-sm ${withdrawMethod === "crypto" ? "text-green-600 dark:text-green-400" : "text-neutral-700 dark:text-neutral-300"}`}>
+                        Crypto
+                      </span>
+                      <span className="text-[10px] text-neutral-500">~10 min</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* UPI Details Form */}
+                {withdrawMethod === "razorpay" && (
+                  <div className="space-y-4 mb-6">
+                    <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-3 flex items-center gap-2 text-sm text-green-700 dark:text-green-300">
+                      <span className="text-lg">⚡</span>
+                      <span>Instant transfer via UPI - funds arrive within minutes!</span>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        Name (as per UPI)
+                      </label>
+                      <input
+                        type="text"
+                        value={upiDetails.name}
+                        onChange={(e) => setUpiDetails(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="John Doe"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        UPI ID
+                      </label>
+                      <input
+                        type="text"
+                        value={upiDetails.upiId}
+                        onChange={(e) => setUpiDetails(prev => ({ ...prev, upiId: e.target.value.toLowerCase() }))}
+                        placeholder="yourname@upi"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                      <p className="mt-1 text-xs text-neutral-500">
+                        Examples: name@okicici, name@ybl, name@paytm
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bank Details Form */}
+                {withdrawMethod === "bank" && (
+                  <div className="space-y-4 mb-6">
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        Account Holder Name
+                      </label>
+                      <input
+                        type="text"
+                        value={bankDetails.accountName}
+                        onChange={(e) => setBankDetails(prev => ({ ...prev, accountName: e.target.value }))}
+                        placeholder="John Doe"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        Bank Name
+                      </label>
+                      <input
+                        type="text"
+                        value={bankDetails.bankName}
+                        onChange={(e) => setBankDetails(prev => ({ ...prev, bankName: e.target.value }))}
+                        placeholder="State Bank of India"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        Account Number
+                      </label>
+                      <input
+                        type="text"
+                        value={bankDetails.accountNumber}
+                        onChange={(e) => setBankDetails(prev => ({ ...prev, accountNumber: e.target.value }))}
+                        placeholder="1234567890"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        IFSC Code
+                      </label>
+                      <input
+                        type="text"
+                        value={bankDetails.ifscCode}
+                        onChange={(e) => setBankDetails(prev => ({ ...prev, ifscCode: e.target.value.toUpperCase() }))}
+                        placeholder="SBIN0001234"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Crypto Wallet Form */}
+                {withdrawMethod === "crypto" && (
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                      Wallet Address (ETH/Polygon)
+                    </label>
+                    <input
+                      type="text"
+                      value={cryptoWallet.address}
+                      onChange={(e) => setCryptoWallet(prev => ({ ...prev, address: e.target.value }))}
+                      placeholder="0x..."
+                      className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
+                    />
+                    <p className="mt-2 text-xs text-neutral-500 flex items-center gap-1">
+                      <IconAlertCircle className="w-3 h-3" />
+                      Ensure the wallet address is correct. Transactions are irreversible.
+                    </p>
+                  </div>
+                )}
+
+                {/* Submit Button */}
+                <button
+                  onClick={processWithdrawal}
+                  disabled={
+                    processingWithdraw ||
+                    !withdrawAmount ||
+                    !withdrawMethod ||
+                    Number(withdrawAmount) <= 0 ||
+                    Number(withdrawAmount) > summary.availableBalance ||
+                    (withdrawMethod === "bank" && (!bankDetails.accountNumber || !bankDetails.ifscCode || !bankDetails.accountName || !bankDetails.bankName)) ||
+                    (withdrawMethod === "crypto" && !cryptoWallet.address) ||
+                    (withdrawMethod === "razorpay" && (!upiDetails.upiId || !upiDetails.name || !upiDetails.upiId.includes("@")))
+                  }
+                  className="w-full py-3 bg-green-500 hover:bg-green-600 disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {processingWithdraw ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <IconArrowUpRight className="w-5 h-5" />
+                      Withdraw ₹{Number(withdrawAmount || 0).toLocaleString()}
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

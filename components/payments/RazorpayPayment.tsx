@@ -37,122 +37,162 @@ export default function RazorpayPayment({
   processing,
   setProcessing,
 }: RazorpayPaymentProps) {
-  const [selectedMethod, setSelectedMethod] = useState<"upi" | "card" | "netbanking">("upi");
-  const [upiId, setUpiId] = useState("");
-  const [showQR, setShowQR] = useState(false);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Load Razorpay script
   useEffect(() => {
+    const existingScript = document.querySelector('script[src="https://checkout.razorpay.com/v1/checkout.js"]');
+    if (existingScript) {
+      setRazorpayLoaded(true);
+      return;
+    }
+
     const script = document.createElement("script");
     script.src = "https://checkout.razorpay.com/v1/checkout.js";
     script.async = true;
     script.onload = () => setRazorpayLoaded(true);
+    script.onerror = () => setError("Failed to load payment gateway");
     document.body.appendChild(script);
 
     return () => {
-      if (document.body.contains(script)) {
-        document.body.removeChild(script);
-      }
+      // Don't remove the script as it might be needed elsewhere
     };
   }, []);
 
-  const paymentMethods = [
-    {
-      id: "upi",
-      name: "UPI",
-      description: "Pay using any UPI app",
-      icon: IconQrcode,
-      popular: true,
-    },
-    {
-      id: "card",
-      name: "Card",
-      description: "Debit/Credit Card",
-      icon: IconCreditCard,
-      popular: false,
-    },
-    {
-      id: "netbanking",
-      name: "Net Banking",
-      description: "All major banks",
-      icon: IconBuilding,
-      popular: false,
-    },
-  ];
+  // Auto-trigger payment when component mounts and Razorpay is loaded
+  useEffect(() => {
+    if (razorpayLoaded && !processing) {
+      handlePayment();
+    }
+  }, [razorpayLoaded]);
 
   const handlePayment = async () => {
+    if (!razorpayLoaded) {
+      setError("Payment gateway is loading...");
+      return;
+    }
+
     setProcessing(true);
+    setError(null);
 
     try {
-      // In production, you would create an order on your backend first
-      // For demo, we'll use Razorpay's test mode
-      const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_demo", // Your Razorpay Key ID
-        amount: amount * 100, // Razorpay expects amount in paise
+      // Create order on backend first - REQUIRED for UPI to work
+      const orderResponse = await fetch("/api/razorpay/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: amount,
+          currency: "INR",
+          projectTitle: projectTitle,
+          freelancerName: freelancerName,
+        }),
+      });
+
+      let orderId = null;
+      let orderAmount = amount * 100;
+      
+      if (orderResponse.ok) {
+        const orderData = await orderResponse.json();
+        orderId = orderData.order?.id;
+        orderAmount = orderData.order?.amount || amount * 100;
+        console.log("Order created:", orderId);
+      } else {
+        const errorData = await orderResponse.json();
+        console.error("Order creation failed:", errorData);
+        // Continue without order - UPI might not work but cards will
+      }
+
+      const options: any = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_RlRpj56bL4sS2e",
+        amount: orderAmount,
         currency: "INR",
         name: "TrustHire",
         description: `Payment for ${projectTitle}`,
-        image: "/logo.png",
         handler: function (response: any) {
-          // Payment successful
-          onSuccess(response.razorpay_payment_id, response.razorpay_order_id || "demo_order");
+          console.log("Payment success:", response);
+          onSuccess(
+            response.razorpay_payment_id, 
+            response.razorpay_order_id || orderId || `order_${Date.now()}`
+          );
         },
         prefill: {
-          name: "",
-          email: "",
-          contact: "",
+          name: "Test User",
+          email: "test@example.com",
+          contact: "9999999999",
+        },
+        config: {
+          display: {
+            blocks: {
+              utib: {
+                name: "Pay using UPI",
+                instruments: [
+                  {
+                    method: "upi",
+                    flows: ["qr", "collect", "intent"],
+                  },
+                ],
+              },
+              other: {
+                name: "Other payment methods",
+                instruments: [
+                  { method: "card" },
+                  { method: "netbanking" },
+                  { method: "wallet" },
+                ],
+              },
+            },
+            sequence: ["block.utib", "block.other"],
+            preferences: {
+              show_default_blocks: false,
+            },
+          },
         },
         notes: {
           project: projectTitle,
-          worker: freelancerName,
+          freelancer: freelancerName,
         },
         theme: {
-          color: "#22C55E", // Green theme for workers
+          color: "#F97316",
         },
         modal: {
           ondismiss: function () {
+            console.log("Payment modal dismissed");
             setProcessing(false);
+            onCancel();
           },
-        },
-        method: {
-          upi: selectedMethod === "upi",
-          card: selectedMethod === "card",
-          netbanking: selectedMethod === "netbanking",
-          wallet: false,
-          paylater: false,
+          escape: true,
+          backdropclose: false,
         },
       };
 
-      if (razorpayLoaded && window.Razorpay) {
-        const razorpay = new window.Razorpay(options);
-        razorpay.on("payment.failed", function (response: any) {
-          console.error("Payment failed:", response.error);
-          setProcessing(false);
-        });
-        razorpay.open();
-      } else {
-        // Fallback: Simulate payment for demo
-        await simulatePayment();
+      // Only add order_id if we have one - required for UPI QR
+      if (orderId) {
+        options.order_id = orderId;
       }
+
+      console.log("Opening Razorpay with options:", { ...options, key: "***", order_id: orderId ? "present" : "missing" });
+      
+      const razorpay = new window.Razorpay(options);
+      
+      razorpay.on("payment.failed", function (response: any) {
+        console.error("Payment failed:", response.error);
+        setError(response.error.description || "Payment failed. Please try again.");
+        setProcessing(false);
+      });
+      
+      razorpay.open();
     } catch (error) {
       console.error("Payment error:", error);
+      setError("Failed to initialize payment. Please try again.");
       setProcessing(false);
     }
   };
 
-  // Simulate payment for demo purposes
-  const simulatePayment = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    const mockPaymentId = `pay_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const mockOrderId = `order_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    onSuccess(mockPaymentId, mockOrderId);
-  };
-
   return (
-    <div className="bg-white dark:bg-neutral-800 rounded-2xl max-w-lg w-full overflow-hidden">
+    <div className="bg-white dark:bg-neutral-800 rounded-2xl max-w-md w-full overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-green-500 to-green-600 p-6 text-white">
+      <div className="bg-gradient-to-r from-orange-500 to-orange-600 p-6 text-white">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-3">
             <IconLock className="w-8 h-8" />
@@ -165,8 +205,8 @@ export default function RazorpayPayment({
             <IconX className="w-5 h-5" />
           </button>
         </div>
-        <p className="text-green-100 text-sm">
-          Pay securely using UPI, Cards, or Net Banking
+        <p className="text-orange-100 text-sm">
+          Pay securely via Razorpay
         </p>
       </div>
 
@@ -180,7 +220,7 @@ export default function RazorpayPayment({
             </span>
           </div>
           <div className="flex justify-between items-center mb-3">
-            <span className="text-neutral-600 dark:text-neutral-400">Worker</span>
+            <span className="text-neutral-600 dark:text-neutral-400">Freelancer</span>
             <span className="text-neutral-900 dark:text-white font-medium">{freelancerName}</span>
           </div>
           <div className="border-t border-neutral-200 dark:border-neutral-600 pt-3 mt-3">
@@ -188,7 +228,7 @@ export default function RazorpayPayment({
               <span className="text-lg font-semibold text-neutral-900 dark:text-white">
                 Total Amount
               </span>
-              <div className="flex items-center gap-1 text-green-500 font-bold text-2xl">
+              <div className="flex items-center gap-1 text-orange-500 font-bold text-2xl">
                 <IconCurrencyRupee className="w-6 h-6" />
                 {amount.toLocaleString("en-IN")}
               </div>
@@ -196,119 +236,79 @@ export default function RazorpayPayment({
           </div>
         </div>
 
-        {/* Payment Methods */}
-        <div className="mb-6">
-          <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400 mb-3">
-            Select Payment Method
-          </p>
-          <div className="space-y-2">
-            {paymentMethods.map((method) => (
-              <button
-                key={method.id}
-                onClick={() => setSelectedMethod(method.id as any)}
-                className={`w-full p-4 rounded-xl border-2 transition-all flex items-center gap-4 ${
-                  selectedMethod === method.id
-                    ? "border-green-500 bg-green-50 dark:bg-green-900/20"
-                    : "border-neutral-200 dark:border-neutral-600 hover:border-neutral-300 dark:hover:border-neutral-500"
-                }`}
-              >
-                <div
-                  className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                    selectedMethod === method.id
-                      ? "bg-green-500 text-white"
-                      : "bg-neutral-100 dark:bg-neutral-700 text-neutral-500"
-                  }`}
-                >
-                  <method.icon className="w-5 h-5" />
-                </div>
-                <div className="flex-1 text-left">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-neutral-900 dark:text-white">
-                      {method.name}
-                    </span>
-                    {method.popular && (
-                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs rounded-full">
-                        Popular
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-neutral-500">{method.description}</p>
-                </div>
-                {selectedMethod === method.id && (
-                  <IconCheck className="w-5 h-5 text-green-500" />
-                )}
-              </button>
-            ))}
+        {/* Error Message */}
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-600 dark:text-red-400 text-sm">
+            {error}
           </div>
-        </div>
-
-        {/* UPI Quick Pay Option */}
-        {selectedMethod === "upi" && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            className="mb-6"
-          >
-            <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-4">
-              <p className="text-sm font-medium text-green-700 dark:text-green-400 mb-3">
-                Quick UPI Options
-              </p>
-              <div className="flex gap-3 flex-wrap">
-                {["gpay", "phonepe", "paytm", "bhim"].map((app) => (
-                  <div
-                    key={app}
-                    className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-neutral-800 rounded-lg border border-green-200 dark:border-green-800"
-                  >
-                    <div className="w-6 h-6 rounded bg-neutral-200 dark:bg-neutral-700" />
-                    <span className="text-sm capitalize text-neutral-700 dark:text-neutral-300">
-                      {app === "gpay" ? "Google Pay" : app === "phonepe" ? "PhonePe" : app}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
-                <label className="text-sm text-neutral-600 dark:text-neutral-400 block mb-2">
-                  Or enter UPI ID
-                </label>
-                <input
-                  type="text"
-                  value={upiId}
-                  onChange={(e) => setUpiId(e.target.value)}
-                  placeholder="yourname@upi"
-                  className="w-full px-4 py-2 bg-white dark:bg-neutral-800 rounded-lg border border-neutral-200 dark:border-neutral-600 focus:ring-2 focus:ring-green-500 focus:border-transparent text-neutral-900 dark:text-white"
-                />
-              </div>
-            </div>
-          </motion.div>
         )}
 
-        {/* Security Badge */}
-        <div className="flex items-center justify-center gap-2 mb-6 text-neutral-500 text-sm">
-          <IconLock className="w-4 h-4" />
-          <span>256-bit SSL Secured Payment</span>
-        </div>
+        {/* Loading State */}
+        {processing ? (
+          <div className="text-center py-8">
+            <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+            <p className="text-neutral-600 dark:text-neutral-400">
+              Opening Razorpay checkout...
+            </p>
+            <p className="text-sm text-neutral-500 mt-2">
+              Please complete payment in the popup window
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Payment Methods Info */}
+            <div className="mb-6">
+              <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400 mb-3">
+                Available Payment Methods
+              </p>
+              <div className="flex gap-3 flex-wrap">
+                <div className="flex items-center gap-2 px-3 py-2 bg-orange-100 dark:bg-orange-900/30 rounded-lg border border-orange-300 dark:border-orange-700">
+                  <IconQrcode className="w-5 h-5 text-orange-600" />
+                  <span className="text-sm font-medium text-orange-700 dark:text-orange-300">UPI / QR</span>
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2 bg-neutral-100 dark:bg-neutral-700 rounded-lg">
+                  <IconCreditCard className="w-5 h-5 text-orange-500" />
+                  <span className="text-sm text-neutral-700 dark:text-neutral-300">Cards</span>
+                </div>
+                <div className="flex items-center gap-2 px-3 py-2 bg-neutral-100 dark:bg-neutral-700 rounded-lg">
+                  <IconBuilding className="w-5 h-5 text-orange-500" />
+                  <span className="text-sm text-neutral-700 dark:text-neutral-300">NetBanking</span>
+                </div>
+              </div>
+              <p className="text-xs text-neutral-500 mt-2">
+                💡 GPay, PhonePe, Paytm & QR code available in checkout
+              </p>
+            </div>
 
-        {/* Pay Button */}
-        <button
-          onClick={handlePayment}
-          disabled={processing}
-          className="w-full py-4 bg-green-500 text-white font-semibold rounded-xl hover:bg-green-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-        >
-          {processing ? (
-            <>
-              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              Processing Payment...
-            </>
-          ) : (
-            <>
-              <IconCurrencyRupee className="w-5 h-5" />
-              Pay ₹{amount.toLocaleString("en-IN")}
-            </>
-          )}
-        </button>
+            {/* Security Badge */}
+            <div className="flex items-center justify-center gap-2 mb-6 text-neutral-500 text-sm">
+              <IconLock className="w-4 h-4" />
+              <span>256-bit SSL Secured by Razorpay</span>
+            </div>
+
+            {/* Pay Button */}
+            <button
+              onClick={handlePayment}
+              disabled={!razorpayLoaded}
+              className="w-full py-4 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {!razorpayLoaded ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                <>
+                  <IconCurrencyRupee className="w-5 h-5" />
+                  Pay ₹{amount.toLocaleString("en-IN")}
+                </>
+              )}
+            </button>
+          </>
+        )}
 
         <p className="text-center text-xs text-neutral-500 mt-4">
-          By proceeding, you agree to TrustHire&apos;s payment terms and conditions
+          Powered by Razorpay • UPI, Cards, NetBanking accepted
         </p>
       </div>
     </div>

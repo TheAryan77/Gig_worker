@@ -53,7 +53,7 @@ interface EarningRecord {
   type: "escrow" | "release" | "withdrawal";
   status: "held" | "completed" | "pending" | "processed";
   createdAt: Timestamp;
-  withdrawalMethod?: "bank" | "crypto";
+  withdrawalMethod?: "bank" | "crypto" | "razorpay";
 }
 
 interface EarningsSummary {
@@ -76,6 +76,11 @@ interface CryptoWallet {
   network: string;
 }
 
+interface UpiDetails {
+  upiId: string;
+  name: string;
+}
+
 export default function FreelancerEarnings() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -93,7 +98,7 @@ export default function FreelancerEarnings() {
   
   // Withdrawal states
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
-  const [withdrawMethod, setWithdrawMethod] = useState<"bank" | "crypto" | null>(null);
+  const [withdrawMethod, setWithdrawMethod] = useState<"bank" | "crypto" | "razorpay" | null>(null);
   const [withdrawAmount, setWithdrawAmount] = useState<string>("");
   const [processingWithdraw, setProcessingWithdraw] = useState(false);
   const [withdrawSuccess, setWithdrawSuccess] = useState(false);
@@ -106,6 +111,10 @@ export default function FreelancerEarnings() {
   const [cryptoWallet, setCryptoWallet] = useState<CryptoWallet>({
     address: "",
     network: "ethereum",
+  });
+  const [upiDetails, setUpiDetails] = useState<UpiDetails>({
+    upiId: "",
+    name: "",
   });
 
   // Auth check
@@ -131,6 +140,9 @@ export default function FreelancerEarnings() {
           }
           if (userData.cryptoWallet) {
             setCryptoWallet(userData.cryptoWallet);
+          }
+          if (userData.upiDetails) {
+            setUpiDetails(userData.upiDetails);
           }
         }
       } else {
@@ -232,6 +244,27 @@ export default function FreelancerEarnings() {
 
     setProcessingWithdraw(true);
     try {
+      // Get withdrawal details based on method
+      const getWithdrawalDetails = () => {
+        if (withdrawMethod === "bank") {
+          return { bankDetails };
+        } else if (withdrawMethod === "crypto") {
+          return { cryptoWallet };
+        } else {
+          return { upiDetails };
+        }
+      };
+
+      const getProcessingNote = () => {
+        if (withdrawMethod === "bank") {
+          return `Bank transfer to ${bankDetails.bankName} - ${bankDetails.accountNumber.slice(-4)}`;
+        } else if (withdrawMethod === "crypto") {
+          return `Crypto transfer to ${cryptoWallet.address.slice(0, 8)}...${cryptoWallet.address.slice(-6)} on ${cryptoWallet.network}`;
+        } else {
+          return `UPI transfer to ${upiDetails.upiId}`;
+        }
+      };
+
       // Create withdrawal transaction record
       await addDoc(collection(db, "transactions"), {
         freelancerId: userId,
@@ -240,7 +273,7 @@ export default function FreelancerEarnings() {
         type: "withdrawal",
         status: "pending",
         withdrawalMethod: withdrawMethod,
-        ...(withdrawMethod === "bank" ? { bankDetails } : { cryptoWallet }),
+        ...getWithdrawalDetails(),
         createdAt: serverTimestamp(),
       });
 
@@ -248,7 +281,7 @@ export default function FreelancerEarnings() {
       const userRef = doc(db, "users", userId);
       await updateDoc(userRef, {
         availableBalance: summary.availableBalance - amount,
-        ...(withdrawMethod === "bank" ? { bankDetails } : { cryptoWallet }),
+        ...getWithdrawalDetails(),
       });
 
       // Create withdrawal record in withdrawals collection for admin tracking
@@ -258,16 +291,8 @@ export default function FreelancerEarnings() {
         amount: amount,
         method: withdrawMethod,
         status: "pending",
-        ...(withdrawMethod === "bank" 
-          ? { 
-              bankDetails,
-              processingNote: `Bank transfer to ${bankDetails.bankName} - ${bankDetails.accountNumber.slice(-4)}`
-            } 
-          : { 
-              cryptoWallet,
-              processingNote: `Crypto transfer to ${cryptoWallet.address.slice(0, 8)}...${cryptoWallet.address.slice(-6)} on ${cryptoWallet.network}`
-            }
-        ),
+        ...getWithdrawalDetails(),
+        processingNote: getProcessingNote(),
         requestedAt: serverTimestamp(),
       });
 
@@ -307,6 +332,11 @@ export default function FreelancerEarnings() {
   // Validate crypto wallet
   const isCryptoWalletValid = () => {
     return cryptoWallet.address.trim() !== "" && cryptoWallet.address.startsWith("0x");
+  };
+
+  // Validate UPI details
+  const isUpiDetailsValid = () => {
+    return upiDetails.upiId.trim() !== "" && upiDetails.upiId.includes("@") && upiDetails.name.trim() !== "";
   };
 
   const sidebarLinks = [
@@ -635,35 +665,92 @@ export default function FreelancerEarnings() {
                   <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
                     Withdrawal Method
                   </label>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <button
+                      onClick={() => setWithdrawMethod("razorpay")}
+                      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
+                        withdrawMethod === "razorpay"
+                          ? "border-orange-500 bg-orange-50 dark:bg-orange-900/20"
+                          : "border-neutral-200 dark:border-neutral-700 hover:border-orange-300"
+                      }`}
+                    >
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                        withdrawMethod === "razorpay" ? "bg-orange-100 dark:bg-orange-900/30" : "bg-neutral-100 dark:bg-neutral-700"
+                      }`}>
+                        <span className="text-lg font-bold text-orange-500">₹</span>
+                      </div>
+                      <span className={`font-medium text-sm ${withdrawMethod === "razorpay" ? "text-orange-600 dark:text-orange-400" : "text-neutral-700 dark:text-neutral-300"}`}>
+                        UPI
+                      </span>
+                      <span className="text-[10px] text-green-500 font-medium">Instant</span>
+                    </button>
                     <button
                       onClick={() => setWithdrawMethod("bank")}
-                      className={`flex items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
+                      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
                         withdrawMethod === "bank"
                           ? "border-orange-500 bg-orange-50 dark:bg-orange-900/20"
                           : "border-neutral-200 dark:border-neutral-700 hover:border-orange-300"
                       }`}
                     >
-                      <IconBuildingBank className={`w-6 h-6 ${withdrawMethod === "bank" ? "text-orange-500" : "text-neutral-500"}`} />
-                      <span className={`font-medium ${withdrawMethod === "bank" ? "text-orange-600 dark:text-orange-400" : "text-neutral-700 dark:text-neutral-300"}`}>
-                        Bank Transfer
+                      <IconBuildingBank className={`w-8 h-8 ${withdrawMethod === "bank" ? "text-orange-500" : "text-neutral-500"}`} />
+                      <span className={`font-medium text-sm ${withdrawMethod === "bank" ? "text-orange-600 dark:text-orange-400" : "text-neutral-700 dark:text-neutral-300"}`}>
+                        Bank
                       </span>
+                      <span className="text-[10px] text-neutral-500">1-2 days</span>
                     </button>
                     <button
                       onClick={() => setWithdrawMethod("crypto")}
-                      className={`flex items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
+                      className={`flex flex-col items-center justify-center gap-2 p-4 rounded-lg border-2 transition-colors ${
                         withdrawMethod === "crypto"
                           ? "border-orange-500 bg-orange-50 dark:bg-orange-900/20"
                           : "border-neutral-200 dark:border-neutral-700 hover:border-orange-300"
                       }`}
                     >
-                      <IconCurrencyEthereum className={`w-6 h-6 ${withdrawMethod === "crypto" ? "text-orange-500" : "text-neutral-500"}`} />
-                      <span className={`font-medium ${withdrawMethod === "crypto" ? "text-orange-600 dark:text-orange-400" : "text-neutral-700 dark:text-neutral-300"}`}>
-                        Crypto Wallet
+                      <IconCurrencyEthereum className={`w-8 h-8 ${withdrawMethod === "crypto" ? "text-orange-500" : "text-neutral-500"}`} />
+                      <span className={`font-medium text-sm ${withdrawMethod === "crypto" ? "text-orange-600 dark:text-orange-400" : "text-neutral-700 dark:text-neutral-300"}`}>
+                        Crypto
                       </span>
+                      <span className="text-[10px] text-neutral-500">~10 min</span>
                     </button>
                   </div>
                 </div>
+
+                {/* UPI Details Form */}
+                {withdrawMethod === "razorpay" && (
+                  <div className="space-y-4 mb-6">
+                    <div className="bg-orange-50 dark:bg-orange-900/20 rounded-lg p-3 flex items-center gap-2 text-sm text-orange-700 dark:text-orange-300">
+                      <span className="text-lg">⚡</span>
+                      <span>Instant transfer via UPI - funds arrive within minutes!</span>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        Name (as per UPI)
+                      </label>
+                      <input
+                        type="text"
+                        value={upiDetails.name}
+                        onChange={(e) => setUpiDetails(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="John Doe"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                        UPI ID
+                      </label>
+                      <input
+                        type="text"
+                        value={upiDetails.upiId}
+                        onChange={(e) => setUpiDetails(prev => ({ ...prev, upiId: e.target.value.toLowerCase() }))}
+                        placeholder="yourname@upi"
+                        className="w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-700 rounded-lg bg-white dark:bg-neutral-900 text-neutral-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      />
+                      <p className="mt-1 text-xs text-neutral-500">
+                        Examples: name@okicici, name@ybl, name@paytm
+                      </p>
+                    </div>
+                  </div>
+                )}
 
                 {/* Bank Details Form */}
                 {withdrawMethod === "bank" && (
@@ -747,10 +834,12 @@ export default function FreelancerEarnings() {
                   disabled={
                     processingWithdraw ||
                     !withdrawAmount ||
+                    !withdrawMethod ||
                     Number(withdrawAmount) <= 0 ||
                     Number(withdrawAmount) > summary.totalEarnings ||
                     (withdrawMethod === "bank" && (!bankDetails.accountNumber || !bankDetails.ifscCode || !bankDetails.accountName || !bankDetails.bankName)) ||
-                    (withdrawMethod === "crypto" && !cryptoWallet.address)
+                    (withdrawMethod === "crypto" && !cryptoWallet.address) ||
+                    (withdrawMethod === "razorpay" && (!upiDetails.upiId || !upiDetails.name || !upiDetails.upiId.includes("@")))
                   }
                   className="w-full py-3 bg-orange-500 hover:bg-orange-600 disabled:bg-neutral-300 dark:disabled:bg-neutral-700 disabled:cursor-not-allowed text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
                 >

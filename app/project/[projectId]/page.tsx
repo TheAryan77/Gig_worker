@@ -38,6 +38,7 @@ import {
   IconCurrencyBitcoin,
 } from "@tabler/icons-react";
 import CryptoPayment from "@/components/payments/CryptoPayment";
+import RazorpayPayment from "@/components/payments/RazorpayPayment";
 
 interface Project {
   id: string;
@@ -107,8 +108,9 @@ export default function ProjectPage() {
   const [hoverStars, setHoverStars] = useState(0);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [processingPayment, setProcessingPayment] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"crypto" | "escrow" | null>(null);
+  const [paymentMethod, setPaymentMethod] = useState<"crypto" | "razorpay" | "escrow" | null>(null);
   const [showCryptoPayment, setShowCryptoPayment] = useState(false);
+  const [showRazorpayPayment, setShowRazorpayPayment] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -446,6 +448,111 @@ export default function ProjectPage() {
       console.error("Error processing crypto payment:", error);
       setProcessingPayment(false);
     }
+  };
+
+  // Handle Razorpay payment success (UPI/Card/NetBanking)
+  const handleRazorpayPaymentSuccess = async (paymentId: string, orderId: string) => {
+    if (!project || userRole !== "client") return;
+
+    try {
+      // Extract budget amount
+      const budgetMatch = project.budget.match(/\$?([\d,]+)/g);
+      let escrowAmount = 0;
+      if (budgetMatch && budgetMatch.length >= 2) {
+        const min = parseFloat(budgetMatch[0].replace(/[$,]/g, ""));
+        const max = parseFloat(budgetMatch[1].replace(/[$,]/g, ""));
+        escrowAmount = (min + max) / 2;
+      } else if (budgetMatch) {
+        escrowAmount = parseFloat(budgetMatch[0].replace(/[$,]/g, ""));
+      }
+
+      // Convert to INR (mock rate: 1 USD = 83 INR)
+      const inrAmount = Math.round(escrowAmount * 83);
+
+      // Initialize stages
+      const defaultStages = [
+        {
+          name: "Planning & Setup",
+          description: "Initial project setup, requirements gathering, and planning phase",
+          status: "in-progress",
+        },
+        {
+          name: "Development",
+          description: "Main development work, implementing core features and functionality",
+          status: "pending",
+        },
+        {
+          name: "Testing & Delivery",
+          description: "Final testing, bug fixes, documentation, and project handover",
+          status: "pending",
+        },
+      ];
+
+      let stagesToUse = defaultStages;
+      if (project.stages && Array.isArray(project.stages) && project.stages.length > 0) {
+        stagesToUse = project.stages.map((stage, index) => ({
+          ...stage,
+          status: index === 0 ? "in-progress" : stage.status,
+        }));
+      }
+
+      // Update project with Razorpay payment info
+      await updateDoc(doc(db, "projects", projectId), {
+        status: "in-progress",
+        paymentStatus: "escrow",
+        escrowAmount: escrowAmount,
+        budgetAmount: escrowAmount,
+        paidAt: serverTimestamp(),
+        stages: stagesToUse,
+        currentStage: 0,
+        paymentMethod: "razorpay",
+        razorpayPaymentId: paymentId,
+        razorpayOrderId: orderId,
+      });
+
+      // Record the Razorpay escrow transaction
+      await addDoc(collection(db, "transactions"), {
+        projectId: projectId,
+        projectTitle: project.jobTitle,
+        clientId: project.clientId,
+        clientName: project.clientName,
+        freelancerId: project.freelancerId,
+        freelancerName: project.freelancerName,
+        amount: escrowAmount,
+        currency: "USD",
+        inrAmount: inrAmount,
+        inrCurrency: "INR",
+        type: "escrow",
+        status: "held",
+        paymentMethod: "razorpay",
+        razorpayPaymentId: paymentId,
+        razorpayOrderId: orderId,
+        createdAt: serverTimestamp(),
+      });
+
+      // Add system message
+      await addDoc(collection(db, "projects", projectId, "messages"), {
+        senderId: "system",
+        senderName: "System",
+        senderRole: "client",
+        content: `💳 ${project.clientName} has deposited ₹${inrAmount.toLocaleString()} ($${escrowAmount.toLocaleString()}) via Razorpay into escrow. The project is now active! Payment ID: ${paymentId.slice(0, 15)}...`,
+        type: "system",
+        createdAt: serverTimestamp(),
+      });
+
+      setShowRazorpayPayment(false);
+      setShowPaymentModal(false);
+      setProcessingPayment(false);
+    } catch (error) {
+      console.error("Error processing Razorpay payment:", error);
+      setProcessingPayment(false);
+    }
+  };
+
+  // Get budget amount in INR for Razorpay
+  const getBudgetAmountINR = () => {
+    const usdAmount = getBudgetAmountUSD();
+    return Math.round(usdAmount * 83); // Mock exchange rate
   };
 
   // Get budget amount in USD for crypto conversion
@@ -1429,12 +1536,12 @@ export default function ProjectPage() {
       )}
 
       {/* Payment Modal - Choose Payment Method */}
-      {showPaymentModal && project && !showCryptoPayment && (
+      {showPaymentModal && project && !showCryptoPayment && !showRazorpayPayment && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="bg-white dark:bg-neutral-800 rounded-2xl max-w-lg w-full overflow-hidden"
+            className="bg-white dark:bg-neutral-800 rounded-2xl max-w-lg w-full overflow-hidden max-h-[90vh] overflow-y-auto"
           >
             <div className="bg-gradient-to-r from-orange-500 to-orange-600 p-6 text-white">
               <div className="flex items-center justify-between mb-2">
@@ -1471,7 +1578,10 @@ export default function ProjectPage() {
                 <div className="border-t border-neutral-200 dark:border-neutral-600 pt-3 mt-3">
                   <div className="flex justify-between items-center">
                     <span className="text-neutral-600 dark:text-neutral-400">Budget</span>
-                    <span className="text-orange-500 font-bold">{project.budget}</span>
+                    <div className="text-right">
+                      <span className="text-orange-500 font-bold">{project.budget}</span>
+                      <p className="text-xs text-neutral-500">≈ ₹{getBudgetAmountINR().toLocaleString()}</p>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1482,6 +1592,38 @@ export default function ProjectPage() {
                   Select Payment Method
                 </p>
                 
+                {/* Razorpay UPI/Card Option */}
+                <button
+                  onClick={() => setPaymentMethod("razorpay")}
+                  className={`w-full p-4 rounded-xl border-2 transition-all flex items-center gap-4 ${
+                    paymentMethod === "razorpay"
+                      ? "border-orange-500 bg-orange-50 dark:bg-orange-900/20"
+                      : "border-neutral-200 dark:border-neutral-600 hover:border-neutral-300 dark:hover:border-neutral-500"
+                  }`}
+                >
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                    paymentMethod === "razorpay" ? "bg-orange-500 text-white" : "bg-neutral-100 dark:bg-neutral-700 text-neutral-500"
+                  }`}>
+                    <IconCash className="w-6 h-6" />
+                  </div>
+                  <div className="flex-1 text-left">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-neutral-900 dark:text-white">
+                        UPI / Cards / NetBanking
+                      </span>
+                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs rounded-full">
+                        Popular
+                      </span>
+                    </div>
+                    <p className="text-sm text-neutral-500 mt-1">
+                      Pay with UPI, Credit/Debit Cards, or Net Banking via Razorpay
+                    </p>
+                  </div>
+                  {paymentMethod === "razorpay" && (
+                    <IconCheck className="w-5 h-5 text-orange-500" />
+                  )}
+                </button>
+
                 {/* Crypto Payment Option */}
                 <button
                   onClick={() => setPaymentMethod("crypto")}
@@ -1501,8 +1643,8 @@ export default function ProjectPage() {
                       <span className="font-semibold text-neutral-900 dark:text-white">
                         Crypto (MetaMask)
                       </span>
-                      <span className="px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full">
-                        Recommended
+                      <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 text-xs rounded-full">
+                        Web3
                       </span>
                     </div>
                     <p className="text-sm text-neutral-500 mt-1">
@@ -1530,10 +1672,10 @@ export default function ProjectPage() {
                   </div>
                   <div className="flex-1 text-left">
                     <span className="font-semibold text-neutral-900 dark:text-white">
-                      Traditional Escrow
+                      Demo Escrow
                     </span>
                     <p className="text-sm text-neutral-500 mt-1">
-                      Standard escrow payment. Funds held by TrustHire until completion.
+                      Simulated escrow for testing. No real payment required.
                     </p>
                   </div>
                   {paymentMethod === "escrow" && (
@@ -1542,13 +1684,17 @@ export default function ProjectPage() {
                 </button>
               </div>
 
-              {/* Escrow Info */}
+              {/* Payment Info */}
               <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 mb-6">
                 <div className="flex items-start gap-3">
                   <IconLock className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
                   <div className="text-sm">
                     <p className="font-medium text-blue-700 dark:text-blue-400">
-                      {paymentMethod === "crypto" ? "Blockchain Escrow" : "How Escrow Works"}
+                      {paymentMethod === "crypto" 
+                        ? "Blockchain Escrow" 
+                        : paymentMethod === "razorpay"
+                        ? "Secure Payment via Razorpay"
+                        : "How Escrow Works"}
                     </p>
                     <ul className="text-blue-600 dark:text-blue-500 mt-2 space-y-1">
                       {paymentMethod === "crypto" ? (
@@ -1557,6 +1703,13 @@ export default function ProjectPage() {
                           <li>• Full transparency with transaction verification</li>
                           <li>• Automatic release upon project completion</li>
                           <li>• Lower fees compared to traditional payments</li>
+                        </>
+                      ) : paymentMethod === "razorpay" ? (
+                        <>
+                          <li>• Pay securely with UPI, Cards, or Net Banking</li>
+                          <li>• Instant payment confirmation</li>
+                          <li>• Funds held securely until project completion</li>
+                          <li>• PCI-DSS compliant payment processing</li>
                         </>
                       ) : (
                         <>
@@ -1586,6 +1739,8 @@ export default function ProjectPage() {
                   onClick={() => {
                     if (paymentMethod === "crypto") {
                       setShowCryptoPayment(true);
+                    } else if (paymentMethod === "razorpay") {
+                      setShowRazorpayPayment(true);
                     } else if (paymentMethod === "escrow") {
                       processPayment();
                     }
@@ -1602,10 +1757,16 @@ export default function ProjectPage() {
                     <>
                       {paymentMethod === "crypto" ? (
                         <IconCurrencyEthereum className="w-4 h-4" />
+                      ) : paymentMethod === "razorpay" ? (
+                        <IconCash className="w-4 h-4" />
                       ) : (
                         <IconWallet className="w-4 h-4" />
                       )}
-                      {paymentMethod === "crypto" ? "Pay with Crypto" : "Pay with Escrow"}
+                      {paymentMethod === "crypto" 
+                        ? "Pay with Crypto" 
+                        : paymentMethod === "razorpay"
+                        ? "Pay with Razorpay"
+                        : "Demo Payment"}
                     </>
                   )}
                 </button>
@@ -1633,6 +1794,29 @@ export default function ProjectPage() {
               onSuccess={handleCryptoPaymentSuccess}
               onCancel={() => {
                 setShowCryptoPayment(false);
+                setProcessingPayment(false);
+              }}
+              processing={processingPayment}
+              setProcessing={setProcessingPayment}
+            />
+          </motion.div>
+        </div>
+      )}
+
+      {/* Razorpay Payment Modal */}
+      {showRazorpayPayment && project && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+          >
+            <RazorpayPayment
+              amount={getBudgetAmountINR()}
+              projectTitle={project.jobTitle}
+              freelancerName={project.freelancerName}
+              onSuccess={handleRazorpayPaymentSuccess}
+              onCancel={() => {
+                setShowRazorpayPayment(false);
                 setProcessingPayment(false);
               }}
               processing={processingPayment}
