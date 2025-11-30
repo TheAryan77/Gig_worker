@@ -32,9 +32,9 @@ export default function Home() {
         <TimelineDemo/>
       </FollowerPointerCard>
       
-      <FollowerPointerCard title="What Users Say?">
+      {/* <FollowerPointerCard title="What Users Say?"> */}
         <AnimatedTestimonialsDemo/>
-      </FollowerPointerCard>
+      {/* </FollowerPointerCard> */}
       
       <FollowerPointerCard title="Global Connection">
         <Services/>

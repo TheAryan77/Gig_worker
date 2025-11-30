@@ -4,39 +4,41 @@ export function AnimatedTestimonialsDemo() {
   const testimonials = [
     {
       quote:
-        "The attention to detail and innovative features have completely transformed our workflow. This is exactly what we've been looking for.",
-      name: "Sarah Chen",
-      designation: "Product Manager at TechFlow",
-      src: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=3560&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
+        "The escrow system completely changed how we work with freelancers. Payments are transparent, milestones are clear, and disputes are practically non-existent. This platform brings real trust into remote collaboration.",
+      name: "Anmol Anand",
+      designation: "Student at ABES",
+      src: "https://github.com/TheAryan77/Shivanshu-s-Project-/blob/main/anmol.png?raw=true",
     },
     {
       quote:
-        "Implementation was seamless and the results exceeded our expectations. The platform's flexibility is remarkable.",
-      name: "Michael Rodriguez",
-      designation: "CTO at InnovateSphere",
-      src: "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?q=80&w=3540&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
+        "I often need helpers for my godown work, but payment and attendance used to be messy. With this platform, tasks are tracked properly and payment happens as agreed. It saves time and avoids misunderstandings.",
+      name: "Nikhil Mahendru",
+      designation: "Founder at Mahendru Pustak Bhandar",
+      src: "https://github.com/TheAryan77/Shivanshu-s-Project-/blob/main/nikhil.png?raw=true",
     },
     {
       quote:
-        "This solution has significantly improved our team's productivity. The intuitive interface makes complex tasks simple.",
-      name: "Emily Watson",
-      designation: "Operations Director at CloudScale",
-      src: "https://images.unsplash.com/photo-1623582854588-d60de57fa33f?q=80&w=3540&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
+"Earlier, we had to wait days or even weeks for payments. With this platform, the work is recorded, and money comes on time after each stage. There is no confusion, no arguments — just fair work and fair pay.",
+      name: "Ram Lal",
+      designation: "Labour at Construction Sites",
+      src: "https://media.istockphoto.com/id/2127751798/photo/senior-worker-in-construction-building-site.jpg?s=612x612&w=0&k=20&c=zuNUVlKcmbKRIGRWWpfslGg12xs4aFeQ2EyPEuqmapc=",
     },
     {
-      quote:
-        "Outstanding support and robust features. It's rare to find a product that delivers on all its promises.",
-      name: "James Kim",
-      designation: "Engineering Lead at DataPro",
-      src: "https://images.unsplash.com/photo-1636041293178-808a6762ab39?q=80&w=3464&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
+      
+        quote:
+        "For the first time, I don’t worry about clients disappearing after delivery. The milestone-based payments and automated releases make freelancing stress-free and professional.",
+     name: "Rahul",
+      designation: "Founder at ScaleUp Systems",
+      src: "https://github.com/TheAryan77/Shivanshu-s-Project-/blob/main/rahul.png?raw=true",
     },
     {
-      quote:
-        "The scalability and performance have been game-changing for our organization. Highly recommend to any growing business.",
-      name: "Lisa Thompson",
-      designation: "VP of Technology at FutureNet",
-      src: "https://images.unsplash.com/photo-1624561172888-ac93c696e10c?q=80&w=2592&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D",
-    },
+quote:
+        "The AI-assisted verification is a game changer. Even without deep technical knowledge, I can confidently approve work knowing the quality checks are already done.",
+      name: "Harish Suthar",
+      designation: "Full Stack Developer (Freelancer)",
+      src: 
+"https://github.com/TheAryan77/Shivanshu-s-Project-/blob/main/harish.png?raw=true"
+    }
   ];
   return <AnimatedTestimonials testimonials={testimonials} />;
 }
